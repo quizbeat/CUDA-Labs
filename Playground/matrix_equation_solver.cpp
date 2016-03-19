@@ -1,5 +1,6 @@
 #include <iostream>
 #include <cstdlib>
+#include <cmath>
 
 using namespace std;
 
@@ -20,6 +21,13 @@ void swap_rows(long *permutations, long i, long j)
     permutations[j] = temp;
 }
 
+bool zero_column(float **A, long n, long i, long j)
+// returns true if column j in the rows from i to n equals zero
+{
+    // code here...
+    return false;
+}
+
 void solve_equation(float **A, float **X, float **B, long m, long n, long k)
 // solves matrix equation AX = B, where:
 // A - n x m matrix, B - n x k matrix, X - unknown m x k matrix
@@ -31,18 +39,25 @@ void solve_equation(float **A, float **X, float **B, long m, long n, long k)
     }
 
     // transform block matrix [A|B]
+    long j_pivot = 0;
     for (long row = 0; row < n; row++) {
         long column = row;
         // find row with max value at current column
         long max_value_row = row;
         for (long i = row + 1; i < n; i++) {
-            if (fabs(A[permutations[i]][column] > A[permutations[max_value_row]][column]) {
+            if (fabs(A[permutations[i]][column] > A[permutations[max_value_row]][column])) {
                 max_value_row = i;
             }
         }
         // swap current row and found row
         swap_rows(permutations, row, max_value_row);
-
+        // change bottom elements to zero
+        for (long i = row + 1; i < n; i++) {
+            float k = -A[permutations[i]][j_pivot] / A[permutations[row]][j_pivot];
+            for (long j = j_pivot; j < m; j++) {
+                A[permutations[i]][j] += A[permutations[row]][j] * k;
+            }
+        }
     }
 }
 
