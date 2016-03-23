@@ -57,18 +57,14 @@ void solve_equation(float **A, float **X, float **B, long n, long m, long k)
 // solves matrix equation AX = B, where:
 // A - n x m matrix, B - n x k matrix, X - unknown m x k matrix
 {
-    /// parallel part 1 begin
     // create permutations array
     long *prm = (long *)malloc(n * sizeof(long));
     for (long i = 0; i < n; i++) {
         prm[i] = i;
     }
-    /// parallel part 1 end
-
 
     long *x_index = (long *)malloc(n * sizeof(long));
     x_index[0] = 0;
-
 
     // transform block matrix [A|B] to the row echelon form
     long j_pivot = 0;
@@ -112,16 +108,6 @@ void solve_equation(float **A, float **X, float **B, long n, long m, long k)
     for (long t = 0; t < k; t++) {
         // for each row in [A|B] from end to begin
         for (long i = (n - 1); i >= 0; i--) {
-//            // count zero elements
-//            long count = 0;
-//            for (long j = 0; j < m; j++) {
-//                if (A[prm[i]][j] == 0) { // add eps
-//                    count++;
-//                } else {
-//                    break;
-//                }
-//            }
-//            long index = count;
             long index = x_index[i];
             float sum = 0.0;
             for (long j = index + 1; j < m; j++) {
