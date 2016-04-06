@@ -84,7 +84,7 @@ void solve_equation(double **A, double **X, double **B, long n, long m, long k)
                     x_index[row + 1] = j;
                     break;
                 }
-                j_pivot = j - 1;
+                //j_pivot = j - 1;
             }
         }
 
