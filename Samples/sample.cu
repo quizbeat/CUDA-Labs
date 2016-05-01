@@ -23,7 +23,7 @@ int main() {
 	for(i = 0; i < n; i++)
 		a[i] = 1;
 	CSC(cudaMalloc(&dev_a, sizeof(int) * n));
-	CSC(cudaMemcpy(dev_a, a, sizeof(int) * n, cudaMemcpyHostToDevice));	
+	CSC(cudaMemcpy(dev_a, a, sizeof(int) * n, cudaMemcpyHostToDevice));
 	kernel<<<dim3(2), dim3(32)>>>(dev_a, n, 2);
 	CSC(cudaGetLastError());
 	CSC(cudaMemcpy(a, dev_a, sizeof(int) * n, cudaMemcpyDeviceToHost));

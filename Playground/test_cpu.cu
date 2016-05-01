@@ -39,7 +39,7 @@ void swap_rows(long *prm, long i, long j)
 bool zero_column(double **A, long *prm, long n, long i, long j)
 {
     for ( ; i < n; i++) {
-        if (A[prm[i]][j] > eps) {
+        if (fabs(A[prm[i]][j]) > eps) {
             return false;
         }
     }
@@ -54,48 +54,60 @@ void solve_equation(double **A, double **X, double **B, long n, long m, long k)
     }
 
     long *x_index = (long *)malloc(n * sizeof(long));
-    x_index[0] = 0;
+    for (long i = 0; i < n; i++) {
+        x_index[i] = i;
+    }
 
-    long j_pivot = 0;
-    for (long row = 0; row < n; row++) {
-        long column = row;
+    long row = 0;
+    long col = 0;
+
+    for ( ; row < n && col < m; row++, col++) {
+
         long max_value_row = row;
         for (long i = row + 1; i < n; i++) {
-            if (fabs(A[prm[i]][column]) > fabs(A[prm[max_value_row]][column])) {
+            if (fabs(A[prm[i]][col]) > fabs(A[prm[max_value_row]][col])) {
                 max_value_row = i;
             }
         }
 
         swap_rows(prm, row, max_value_row);
 
-        for (long i = row + 1; i < n; i++) {
-            double factor = -A[prm[i]][j_pivot] / A[prm[row]][j_pivot];
-            for (long j = j_pivot; j < m; j++) {
-                A[prm[i]][j] += A[prm[row]][j] * factor;
+        if (fabs(A[prm[row]][col]) > eps) {
+
+            x_index[row] = col;
+
+            for (long i = row + 1; i < n; i++) {
+
+                double factor = -A[prm[i]][col] / A[prm[row]][col];
+                for (long j = col; j < m; j++) {
+                    A[prm[i]][j] += A[prm[row]][j] * factor;
+                }
+                for (long j = 0; j < k; j++) {
+                    B[prm[i]][j] += B[prm[row]][j] * factor;
+                }
             }
-            for (long j = 0; j < k; j++) {
-                B[prm[i]][j] += B[prm[row]][j] * factor;
-            }
+        } else {
+            row--;
         }
 
-        for (long j = j_pivot; j < m; j++) {
-            if (!zero_column(A, prm, n, row + 1, j)) {
-                x_index[row + 1] = j;
-                break;
-            }
-            j_pivot = j - 1;
-        }
-        j_pivot++;
+    }
+
+    if (row == n || col == m) { // ??
+        row--;
     }
 
     for (long t = 0; t < k; t++) {
-        for (long i = (n - 1); i >= 0; i--) {
+        for (long i = row; i >= 0; i--) {
             long index = x_index[i];
             double sum = 0.0;
             for (long j = index + 1; j < m; j++) {
                 sum += A[prm[i]][j] * X[j][t];
             }
-            X[index][t] = (B[prm[i]][t] - sum) / A[prm[i]][index];
+            if (fabs(A[prm[i]][index]) > eps) {
+                X[index][t] = (B[prm[i]][t] - sum) / A[prm[i]][index];
+            } else {
+                X[index][t] = 0.0;
+            }
         }
     }
 }
