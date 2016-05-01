@@ -37,10 +37,11 @@ __host__ void print_matrix(double **M, int n, int m) {
     }
 }
 
-__global__ void swap_rows(int *prm, int i, int j) {
+// j is a pointer to max value row on device
+__global__ void swap_rows(int *prm, int i, int *j) {
     int temp = prm[i];
-    prm[i] = prm[j];
-    prm[j] = temp;
+    prm[i] = prm[*j];
+    prm[*j] = temp;
 }
 
 // inits given array with numbers from 0 to n - 1
@@ -52,21 +53,43 @@ __global__ void initSequence(double *seq, int n) {
     }
 }
 
+// finds max value row beginnig from row to n, updates max_value_row pointer
+__global__ void findMaxValueRow(double *M, int *prm, int row, int col, int n, int *max_value_row) {
+    *max_value_row = row;
+    for (int i = row + 1; i < n; i++) {
+        int index_current = index_for_A(prm[i], col, n, m, k);
+        int index_max = index_for_A(prm[max_value_row], col, n, m, k);
+        if (fabs(M_host[index_current]) > fabs(M_host[index_max])) {
+            max_value_row = i;
+        }
+    }
+}
+
 // updates rows from row_start to n, columns from col_start to (m + k)
-// concurrently updates all columns and all rows ??
-__global__ void updateRowsBelow(double *M, int row_start, int col_start, int n, int m, int k) {
+// concurrently updates all columns ??
+__global__ void updateRowsBelow(double *M, int *prm, int row, int col, int n, int m, int k) {
     int row_index = 0;
+
+    int pivot_index = index_for_A(prm[row], col, n, m, k);
+    double pivot = M[pivot_index];
 
     for (int i = row + 1; i < n; i++) {
 
-        double factor = -A[prm[i]][col] / A[prm[row]][col];
-        for (int j = col; j < m; j++) {
-            A[prm[i]][j] += A[prm[row]][j] * factor;
-        }
-        for (int j = 0; j < k; j++) {
-            B[prm[i]][j] += B[prm[row]][j] * factor;
+        int factor_numerator_index = index_for_A(prm[i], col, n, m, k);
+        int factor_denominator_index = index_for_A(prm[row], col, n, m, k);
+        double factor = -M[factor_numerator_index] / M[factor_denominator_index];
+
+        int column_index = col + blockIdx.x * blockDim.x + threadIdx.x; /// !!!!!!
+        int offset = gridDim.x * blockDim.x;
+
+        for ( ; column_index < (m + k); column_index += offset) {
+            int target_item_index = index_for_A(prm[i], column_index, n, m, k);
+            int pivot_item_index = index_for_A(prm[row], column_index, n, m, k);
+            M[target_item_index] += M[pivot_item_index] * factor;
         }
     }
+
+    x_index[row] = col;
 }
 
 __global__ void backSubstitution(double *M, double *X, double *x_index, int row, int n, int m, int k) {
@@ -100,86 +123,24 @@ __global__ void backSubstitution(double *M, double *X, double *x_index, int row,
     __syncthreads();
 }
 
-void solve_equation(double **A, double **X, double **B, int n, int m, int k)
-{
-    int *prm = (int *)malloc(n * sizeof(int));
-    for (int i = 0; i < n; i++) {
-        prm[i] = i;
-    }
-
-    int *x_index = (int *)malloc(n * sizeof(int));
-    for (int i = 0; i < n; i++) {
-        x_index[i] = i;
-    }
-
-    int row = 0;
-    int col = 0;
-
-    for ( ; row < n && col < m; row++, col++) {
-
-        int max_value_row = row;
-        for (int i = row + 1; i < n; i++) {
-            if (fabs(A[prm[i]][col]) > fabs(A[prm[max_value_row]][col])) {
-                max_value_row = i;
-            }
-        }
-
-        swap_rows(prm, row, max_value_row);
-
-        if (fabs(A[prm[row]][col]) > eps) {
-
-            x_index[row] = col;
-
-            for (int i = row + 1; i < n; i++) {
-
-                double factor = -A[prm[i]][col] / A[prm[row]][col];
-                for (int j = col; j < m; j++) {
-                    A[prm[i]][j] += A[prm[row]][j] * factor;
-                }
-                for (int j = 0; j < k; j++) {
-                    B[prm[i]][j] += B[prm[row]][j] * factor;
-                }
-            }
-        } else {
-            row--;
-        }
-
-    }
-
-    if (row == n || col == m) {
-        row--;
-    }
-
-    for (int t = 0; t < k; t++) {
-        for (int i = row; i >= 0; i--) {
-            int index = x_index[i];
-            double sum = 0.0;
-            for (int j = index + 1; j < m; j++) {
-                sum += A[prm[i]][j] * X[j][t];
-            }
-            if (fabs(A[prm[i]][index]) > eps) {
-                X[index][t] = (B[prm[i]][t] - sum) / A[prm[i]][index];
-            } else {
-                X[index][t] = 0.0;
-            }
-        }
-    }
-}
-
-__host__ inline int index_for_A(int i, int j, int n, int m, int k) {
+inline int index_for_A(int i, int j, int n, int m, int k) {
     return (i * (m + k)) + j;
 }
 
-__host__ inline int index_for_B(int i, int j, int n, int m, int k) {
+inline int index_for_B(int i, int j, int n, int m, int k) {
     return (i * (m + k)) + m + j;
 }
 
-__host__ inline int index_for_X(int i, int j, int n, int m, int k) {
-    return i *
+inline int index_for_AB(int i, int j, int n, int m, int k) {
+    return (i * (m + k)) + j;
 }
 
-int main()
-{
+inline int index_for_X(int i, int j, int n, int m, int k) {
+    return (i * m) + j;
+}
+
+int main() {
+
     int n, m, k;
     cin >> n >> m >> k;
 
@@ -253,78 +214,45 @@ int main()
     // init indexes on device
     initSequence <<<32, 32>>> (x_index_device, n);
 
-    int row = 0;
-    int col = 0;
+    int row = 0; // current row
+    int col = 0; // current column
+
+    int *max_value_row_device; // pointer to max value row on device
+    CSC(cudaMalloc((void **)&max_value_row_device, sizeof(int)));
 
     for ( ; row < n && col < m; row++, col++) {
 
         // find row with max value
-        int max_value_row = row;
-        for (int i = row + 1; i < n; i++) {
-            int index_current = index_for_A(prm_host[i], col, n, m, k);
-            int index_max = index_for_A(prm[max_value_row], col, n, m, k);
-            if (fabs(M_host[index_current]) > fabs(M_host[index_max])) {
-                max_value_row = i;
-            }
-        }
+        findMaxValueRow <<<1, 1>>> (M_device, prm_device, row, col, n, max_value_row_device);
 
         // swap rows on device
-        swap_rows <<<1, 1>>> (prm_device, row, max_value_row);
-
-        // copy permutations array from device to host
-        CSC(cudaMemcpy(prm_host, prm_device, n * sizeof(int), cudaMemcpyDeviceToHost));
-
-        // index for current pivot element
-        int index = index_for_A(prm_host[row], col, n, m, k);
-
-        double *M_pivot_element = (double *)malloc(sizeof(double)); // ???
+        swap_rows <<<1, 1>>> (prm_device, row, max_value_row_device);
 
         // copy pivot value from device to host
-        CSC(cudaMemcpy(M_pivot_element, M_device[index], sizeof(double), cudaMemcpyDeviceToHost));
+        double M_pivot_host;
+        CSC(cudaMemcpy(&M_pivot_host, M_device[prm[*max_value_row_device]], sizeof(double), cudaMemcpyDeviceToHost));
 
-        if (fabs(*M_pivot_element) > eps) {
-
-
-
-            for ()
-
-            // update rows below
-            updateRowsBelow <<<32, 32>>> (M_device, row, col, n, m, k);
-
-            // remember position of diagonal element
-            x_index[row] = col;
-
-            // copy updated x_index array to device
-            CSC(cudaMemcpy(x_index_device, x_index_host, n * sizeof(int), cudaMemcpyHostToDevice));
-
-
+        if (fabs(M_pivot_host) > eps) { // non-zero pivot value
+            updateRowsBelow <<<32, 32>>> (M_device, prm_device, row, col, n, m, k);
         } else {
-            // need to perform next iter on current row
-            row--;
+            row--; // need to perform next iter on current row
         }
-
     }
 
+    // last row position fix
     if (row == n || col == m) {
         row--;
     }
 
-    for (int t = 0; t < k; t++) {
-        for (int i = row; i >= 0; i--) {
-            int index = x_index[i];
-            double sum = 0.0;
-            for (int j = index + 1; j < m; j++) {
-                sum += A[prm[i]][j] * X[j][t];
-            }
-            if (fabs(A[prm[i]][index]) > eps) {
-                X[index][t] = (B[prm[i]][t] - sum) / A[prm[i]][index];
-            } else {
-                X[index][t] = 0.0;
-            }
-        }
-    }
+    // perform Gauss back substitution
+    backSubstitution <<<32, 32>>> (M_device, X_device, x_index_device, row, n, m, k);
 
+    // copy matrix X from device to host
+    CSC(cudaMemcpy(X_host, X_device, X_size * sizeof(double), cudaMemcpyDeviceToHost);
 
+    // print X matrix
+    print_matrix(X_host, m, k);
 
+    // done.
     return 0;
 }
