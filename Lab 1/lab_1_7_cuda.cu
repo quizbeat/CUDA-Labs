@@ -74,8 +74,6 @@ __global__ void findMaxValueRow(double *M, int *prm, int row, int col, int n, in
 // updates rows from row_start to n, columns from col_start to (m + k)
 // concurrently updates all columns ??
 __global__ void updateRowsBelow(double *M, int *prm, int *x_index, int row, int col, int n, int m, int k) {
-    //int pivot_index = index_for_A(prm[row], col, n, m, k);
-    //double pivot = M[pivot_index];
 
     for (int i = row + 1; i < n; i++) {
 
@@ -148,8 +146,6 @@ __global__ void backSubstitution(double *M, double *X, int *prm, int *x_index, i
         }
     }
 }
-
-
 
 __global__ void printMatrix(double *M, int *prm, int n, int m, int k) {
     printf("------------------------ MATRIX M ---------------------------\n");
