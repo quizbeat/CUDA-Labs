@@ -98,17 +98,7 @@ __global__ void backSubstitution(double *M, double *X, int *prm, int *x_index, i
     int X_column_index = blockIdx.x * blockDim.x + threadIdx.x;
     int offset = gridDim.x * blockDim.x;
 
-#ifdef DEBUG
-    printf(">>> backSubstitution: X_column_index = %d\n", X_column_index);
-    printf(">>> backSubstitution: offset = %d\n", offset);
-    printf(">>> backSubstitution: initial row = %d\n", row);
-#endif
-
     for ( ; X_column_index < k; X_column_index += offset) {
-
-#ifdef DEBUG
-    printf(">>> backSubstitution: iter #%d\n", X_column_index);
-#endif
 
         for (int i = row; i >= 0; i--) {
 
@@ -130,36 +120,8 @@ __global__ void backSubstitution(double *M, double *X, int *prm, int *x_index, i
             } else {
                 X[X_target_index] = 0.0;
             }
-
-#ifdef DEBUG
-            printf("Calculating column [%d] with row [%d]\n", X_column_index, i);
-            for (int q = 0; q < m; q++) {
-                int index = index_for_X(q, 0, n, m, k);
-                printf("%f ", X[index]);
-                for (int p = 1; p < k; p++) {
-                    index = index_for_X(q, p, n, m, k);
-                    printf(" %f", X[index]);
-                }
-                printf("\n");
-            }
-#endif
         }
     }
-}
-
-__global__ void printMatrix(double *M, int *prm, int n, int m, int k) {
-    printf("------------------------ MATRIX M ---------------------------\n");
-    for (int i = 0; i < n; i++) {
-        for (int j = 0; j < (m + k); j++) {
-            if (j == m) {
-                printf("| ");
-            }
-            int index = index_for_A(prm[i], j, n, m, k);
-            printf("%lf ", M[index]);
-        }
-        printf("\n");
-    }
-    printf("---------------------------------------------------------------\n\n");
 }
 
 int main() {
@@ -167,93 +129,38 @@ int main() {
     int n, m, k;
     cin >> n >> m >> k;
 
-#ifdef DEBUG
-    cout << "Matrix A: " << n << " row(s), " << m << " column(s)\n";
-    cout << "Matrix B: " << n << " row(s), " << k << " column(s)\n";
-    cout << "Matrix X: " << m << " row(s), " << k << " column(s)\n";
-#endif
-
     // Solving next equation: A * X = B
     // Let's M = [A|B]
     // M = [{A_row_1}{B_row_1},...,{A_row_n},{B_row_n}]
 
     int M_size = (n * m) + (n * k);
-
-#ifdef DEBUG
-    cout << "> alloc memory for M_host\n";
-#endif
-
     double *M_host = (double *)malloc(M_size * sizeof(double));
 
     // read matrix A
-
-#ifdef DEBUG
-    cout << "> read M_host part A\n";
-#endif
-
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < m; j++) {
             int index = index_for_A(i, j, n, m, k);
-#ifdef DEBUG
-            cout << "   (" << i << ", " << j << ") = " << index << "\n";
-#endif
             cin >> M_host[index];
         }
     }
 
     // read matrix B
-
-#ifdef DEBUG
-    cout << "> read M_host part B\n";
-#endif
-
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < k; j++) {
             int index = index_for_B(i, j, n, m, k);
-#ifdef DEBUG
-            cout << "   (" << i << ", " << j << ") = " << index << "\n";
-#endif
             cin >> M_host[index];
         }
     }
 
-#ifdef DEBUG
-    // print matrices
-    cout << "-------------------------- MATRIX M --------------------------\n";
-    for (int i = 0; i < n; i++) {
-        for (int j = 0; j < (m + k); j++) {
-            if (j == m) {
-                cout << "| ";
-            }
-            int index = index_for_A(i, j, n, m, k);
-            cout << M_host[index] << " ";
-        }
-        cout << "\n";
-    }
-    cout << "---------------------------------------------------------------\n\n";
-#endif
-
     // X = [{X_row_1},...,{X_row_m}]
 
     int X_size = m * k;
-
-#ifdef DEBUG
-    cout << "> alloc memory for X_host\n";
-#endif
-
     double *X_host = (double *)malloc(X_size * sizeof(double));
 
     // init matrix X
-#ifdef DEBUG
-    cout << "> init X_host\n";
-#endif
-
     for (int i = 0; i < m; i++) {
         for (int j = 0; j < k; j++) {
             int index = index_for_X(i, j, n, m, k);
-#ifdef DEBUG
-            cout << "   (" << i << ", " << j << ") = " << index << "\n";
-#endif
             X_host[index] = 0.0;
         }
     }
@@ -264,74 +171,46 @@ int main() {
     double *X_device; // matrix X on device
 
     // alloc memory on device for matrix M
-
-#ifdef DEBUG
-    cout << "> CUDA alloc memory for M_device\n";
-    cout << ">    M_size = " << M_size << "\n";
-#endif
-
     CSC(cudaMalloc((void **)&M_device, M_size * sizeof(double)));
+    cudaThreadSynchronize();
 
     // alloc memory on device for matrix X
-
-#ifdef DEBUG
-    cout << "> CUDA alloc memory for X_device\n";
-#endif
-
     CSC(cudaMalloc((void **)&X_device, X_size * sizeof(double)));
+    cudaThreadSynchronize();
 
     // copy matrix data
-
-#ifdef DEBUG
-    cout << "> CUDA copy M_host to M_device\n";
-#endif
-
     CSC(cudaMemcpy(M_device, M_host, M_size * sizeof(double), cudaMemcpyHostToDevice));
+    cudaThreadSynchronize();
 
     CSC(cudaMemcpy(X_device, X_host, X_size * sizeof(double), cudaMemcpyHostToDevice));
+    cudaThreadSynchronize();
 
     int *prm_device; // rows permutations array on device
 
     // alloc memory for permutations array
-
-#ifdef DEBUG
-    cout << "> CUDA alloc memory for prm_device\n";
-#endif
-
     CSC(cudaMalloc((void **)&prm_device, n * sizeof(int)));
+    cudaThreadSynchronize();
 
     // init permutations array on device
-
-#ifdef DEBUG
-    cout << "> CUDA call init sequence for prm_device\n";
-#endif
-
     initSequence <<<32, 32>>> (prm_device, n);
-
-#ifdef DEBUG
-    // check permutations init
-    int *prm_host = (int *)malloc(n * sizeof(int));
-    CSC(cudaMemcpy(prm_host, prm_device, n * sizeof(int), cudaMemcpyDeviceToHost));
-    cout << "\n--------------------- PERMUTATIONS ARRAY --------------------\n";
-    for (int i = 0; i < n; i++) {
-        cout << prm_host[i] << " ";
-    }
-    cout << "\n-------------------------------------------------------------\n\n";
-#endif
+    cudaThreadSynchronize();
 
     int *x_index_device; // array with indexes for diagonal elements on device
 
     // alloc memory for array with indexes
     CSC(cudaMalloc((void **)&x_index_device, n * sizeof(int)));
+    cudaThreadSynchronize();
 
     // init indexes on device
     initSequence <<<32, 32>>> (x_index_device, n);
+    cudaThreadSynchronize();
 
     int row = 0; // current row
     int col = 0; // current column
 
     int *max_value_row_device; // pointer to max value row on device
     CSC(cudaMalloc((void **)&max_value_row_device, sizeof(int)));
+    cudaThreadSynchronize();
 
     for ( ; row < n && col < m; row++, col++) {
 
@@ -339,34 +218,22 @@ int main() {
         findMaxValueRow <<<1, 1>>> (M_device, prm_device, row, col, n, m, k, max_value_row_device);
         cudaThreadSynchronize();
 
-#ifdef DEBUG
-        cout << "> Matrix M before swap rows\n";
-        printMatrix <<<1, 1>>> (M_device, prm_device, n, m, k);
-        cudaThreadSynchronize();
-#endif
-
         // swap rows on device
         swap_rows <<<1, 1>>> (prm_device, row, max_value_row_device);
         cudaThreadSynchronize();
 
-#ifdef DEBUG
-        cout << "> Matrix M after swap rows\n";
-        printMatrix <<<1, 1>>> (M_device, prm_device, n, m, k);
-        cudaThreadSynchronize();
-#endif
-
         // copy pivot value from device to host
-        int max_value_row_host;
-        CSC(cudaMemcpy(&max_value_row_host, max_value_row_device, sizeof(int), cudaMemcpyDeviceToHost));
-        cudaThreadSynchronize();
+        // int max_value_row_host;
+        // CSC(cudaMemcpy(&max_value_row_host, max_value_row_device, sizeof(int), cudaMemcpyDeviceToHost));
+        // cudaThreadSynchronize();
 
-        int real_max_value_row_host;
-        CSC(cudaMemcpy(&real_max_value_row_host, &prm_device[max_value_row_host], sizeof(int), cudaMemcpyDeviceToHost));
+        int pivot_index_prm;
+        CSC(cudaMemcpy(&pivot_index_prm, &prm_device[row], sizeof(int), cudaMemcpyDeviceToHost));
         cudaThreadSynchronize();
 
         double M_pivot_host;
-        int max_value_row_host_index = index_for_A(real_max_value_row_host, col, n, m, k);
-        CSC(cudaMemcpy(&M_pivot_host, &M_device[max_value_row_host_index], sizeof(double), cudaMemcpyDeviceToHost));
+        int M_pivot_host_index = index_for_A(pivot_index_prm, col, n, m, k);
+        CSC(cudaMemcpy(&M_pivot_host, &M_device[M_pivot_host_index], sizeof(double), cudaMemcpyDeviceToHost));
         cudaThreadSynchronize();
 
         if (fabs(M_pivot_host) > eps) { // non-zero pivot value
@@ -375,12 +242,6 @@ int main() {
         } else {
             row--; // need to perform next iter on current row
         }
-
-#ifdef DEBUG
-        cout << "> Matrix M after updating rows\n";
-        printMatrix <<<1, 1>>> (M_device, prm_device, n, m, k);
-        cudaThreadSynchronize();
-#endif
     }
 
     // last row position fix
@@ -398,6 +259,16 @@ int main() {
 
     // print X matrix
     print_matrix(X_host, n, m, k);
+
+    // free device memory
+    CSC(cudaFree(M_device));
+    CSC(cudaFree(X_device));
+    CSC(cudaFree(prm_device));
+    CSC(cudaFree(x_index_device));
+
+    // free host memory
+    free(M_host);
+    free(X_host);
 
     // done.
     return 0;

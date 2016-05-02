@@ -92,15 +92,9 @@ void solve_equation(double **A, double **X, double **B, long n, long m, long k)
 
     }
 
-    printf("row value after loop = %d\n", row);
-    printf("column value after loop = %d\n", col);
-
     if (row == n || col == m) { // ??
         row--;
     }
-
-    printf("row value after fix = %d\n", row);
-    printf("column value after fix = %d\n", col);
 
     for (long t = 0; t < k; t++) {
         for (long i = row; i >= 0; i--) {
