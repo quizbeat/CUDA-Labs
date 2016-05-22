@@ -1,6 +1,6 @@
-require 'rubystats'
-
-gen = Rubystats::NormalDistribution.new(500000, 200000)
+# require 'rubystats'
+#
+# gen = Rubystats::NormalDistribution.new(500000, 200000)
 
 n = gets.to_i
 
