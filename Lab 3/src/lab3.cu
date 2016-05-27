@@ -26,9 +26,23 @@
 
 #define MIN(a, b) (a < b ? a : b)
 #define MAX(a, b) (a > b ? a : b)
+
 #define EPS 1e-7
+
+// gpu defined properties
+#define GRID_SIZE  1024
+#define BLOCK_SIZE 2
+
+// some hacks
+#define LOG_NUM_BANKS 4  // if banks count == 16
+#define CONFLICT_FREE_OFFSET(i) ((i) >> LOG_NUM_BANKS)
+
+
+// sort properties
 #define BUCKET_SIZE 1024
 #define SPLIT_SIZE  512
+
+
 
 
 
@@ -374,7 +388,7 @@ __host__ void recursive_gpu_reduce_min(float *data_device, int n, float *result_
 // =============================================================================
 
 // plain cpu scan
-// floating numbers scan
+// floating point numbers scan
 void scan(float *data, int n, float *result_data, float (*op)(float, float), float identity, bool inclusive) {
     float result = identity;
     for (int i = 0; i < n; i++) {
@@ -409,6 +423,214 @@ void scan_calculate_positions(int *position_for_split, int n, int *size_of_split
 }
 
 
+// gpu scan
+// Blelloch Scan
+__global__ void BlellochScanSumFloat(float *data, int n, float *result) {
+    __shared__ float shared_data[2 * BLOCK_SIZE];
+
+    int thread_id = threadIdx.x;
+    int offset = 1;
+
+    shared_data[thread_id + BLOCK_SIZE] = data[thread_id + BLOCK_SIZE];
+
+    for (int i = n / 2; i > 0; i /= 2) {
+        __syncthreads();
+        if (thread_id < i) {
+            int ai = offset * (2 * thread_id + 1) - 1;
+            int bi = offset * (2 * thread_id + 2) - 1;
+            shared_data[bi] += shared_data[ai];
+        }
+        offset *= 2;
+    }
+
+    // clear last item
+    if (thread_id == 0) {
+        shared_data[n - 1] = 0; // ????
+    }
+
+    // copying and addition
+    for (int i = 1; i < n; i *= 2) {
+        offset /= 2;
+        __syncthreads();
+        if (thread_id < i) {
+            int ai = offset * (2 * thread_id + 1) - 1;
+            int bi = offset * (2 * thread_id + 2) - 1;
+            float t = shared_data[ai];
+            shared_data[ai] = shared_data[bi];
+            shared_data[bi] += t;
+        }
+    }
+
+    __syncthreads();
+
+    // write result
+    result[2 * thread_id] = shared_data[2 * thread_id];
+    result[2 * thread_id + 1] = shared_data[2 * thread_id + 1];
+}
+
+__global__ void scan2(float *data, int n, float *result) {
+    __shared__ float temp[2 * BLOCK_SIZE + CONFLICT_FREE_OFFSET(2 * BLOCK_SIZE)];
+
+    int thread_id = threadIdx.x;
+    int offset = 1;
+    int ai = thread_id;
+    int bi = thread_id + (n / 2);
+    int offset_A = CONFLICT_FREE_OFFSET(ai);
+    int offset_B = CONFLICT_FREE_OFFSET(bi);
+
+    temp[ai + offset_A] = data[ai];
+    temp[bi + offset_B] = data[bi];
+
+    for (int d = n >> 1; d > 0; d >>= 1) {
+        __syncthreads();
+        if (thread_id < d) {
+            int ai = offset * (2 * thread_id + 1) - 1;
+            int bi = offset * (2 * thread_id + 2) - 1;
+            ai += CONFLICT_FREE_OFFSET(ai);
+            bi += CONFLICT_FREE_OFFSET(bi);
+            temp[bi] += temp[ai];
+        }
+        offset <<= 1;
+    }
+
+    if (thread_id == 0) {
+        temp[n - 1 + CONFLICT_FREE_OFFSET(n - 1)] = 0;
+    }
+
+    for (int d = 1; d < n; d <<= 1) {
+        offset >>= 1;
+        __syncthreads();
+        if (thread_id < d) {
+            int ai = offset * (2 * thread_id + 1) - 1;
+            int bi = offset * (2 * thread_id + 2) - 1;
+            ai += CONFLICT_FREE_OFFSET(ai);
+            bi += CONFLICT_FREE_OFFSET(bi);
+            float t = temp[ai];
+            temp[ai] = temp[bi];
+            temp[bi] += t;
+        }
+    }
+
+    __syncthreads();
+
+    result[ai] = temp[ai + offset_A];
+    result[bi] = temp[bi + offset_B];
+}
+
+__global__ void scan3(float *data, int n, float *sums, float *result) {
+    __shared__ float temp[2 * BLOCK_SIZE + CONFLICT_FREE_OFFSET(2 * BLOCK_SIZE)];
+
+    int thread_id = threadIdx.x;
+    int offset = 1;
+    int ai = thread_id;
+    int bi = thread_id + (n / 2);  // different with Roma's code
+    int offset_A = CONFLICT_FREE_OFFSET(ai);
+    int offset_B = CONFLICT_FREE_OFFSET(bi);
+
+    // printf("scan3 [ai + offset_A] = [%d]\nscan3 [bi + offset_B] = [%d]\n", ai + offset_A, bi + offset_B);
+
+    temp[ai + offset_A] = data[ai + 2 * BLOCK_SIZE * blockIdx.x];
+    temp[bi + offset_B] = data[bi + 2 * BLOCK_SIZE * blockIdx.x];
+
+    for (int d = n >> 1; d > 0; d >>= 1) {
+        __syncthreads();
+        if (thread_id < d) {
+            int ai = offset * (2 * thread_id + 1) - 1;
+            int bi = offset * (2 * thread_id + 2) - 1;
+            ai += CONFLICT_FREE_OFFSET(ai);
+            bi += CONFLICT_FREE_OFFSET(bi);
+            temp[bi] += temp[ai];
+        }
+        offset <<= 1;
+    }
+
+    if (thread_id == 0) {
+        int idx = n - 1 + CONFLICT_FREE_OFFSET(n - 1);
+        sums[blockIdx.x] = temp[idx];
+        temp[idx] = 0;
+    }
+
+    for (int d = 1; d < n; d <<= 1) {
+        offset >>= 1;
+        __syncthreads();
+        if (thread_id < d) {
+            int ai = offset * (2 * thread_id + 1) - 1;
+            int bi = offset * (2 * thread_id + 2) - 1;
+            ai += CONFLICT_FREE_OFFSET(ai);
+            bi += CONFLICT_FREE_OFFSET(bi);
+            float t = temp[ai];
+            temp[ai] = temp[bi];
+            temp[bi] += t;
+        }
+    }
+
+    __syncthreads();
+
+    offset = 2 * BLOCK_SIZE * blockIdx.x;
+
+    // printf("scan3 indexes = (%d, %d)\n", ai + offset, bi + offset);
+
+    result[ai + offset] = temp[ai + offset_A];
+    result[bi + offset] = temp[bi + offset_B];
+}
+
+__global__ void scanDistribute(float *data, float *sums) {
+    int idx = threadIdx.x + blockIdx.x * 2 * BLOCK_SIZE;
+    // printf("scanDistribute index = %d\n", idx);
+    data[idx] += sums[blockIdx.x];
+}
+
+__host__ void recursive_gpu_scan(float *data, int n, float *result) {
+
+    printf("--- recursive_gpu_scan (data size = %d)\n", n);
+
+    int numBlocks = n / (2 * BLOCK_SIZE) + 1;
+    // if (numBlocks < 1) {
+    //     numBlocks = 1;
+    // }
+    printf("numBlocks = %d\n", numBlocks);
+
+    float *sums  = NULL;
+    float *sums2 = NULL;
+
+    CSC(cudaMalloc((void **)&sums, numBlocks * sizeof(float)));
+    CSC(cudaMalloc((void **)&sums2, numBlocks * sizeof(float)));
+
+    // CSC(cudaMemset(sums, 0.f, numBlocks * sizeof(float)));
+    // CSC(cudaMemset(sums2, 0.f, numBlocks * sizeof(float)));
+
+    dim3 threads(BLOCK_SIZE, 1, 1);
+    dim3 blocks(numBlocks, 1, 1);
+
+    scan3 <<<blocks, threads>>> (data, 2 * BLOCK_SIZE, sums, result);
+    CSC(cudaGetLastError());
+
+
+    // float *result_host = (float *)malloc(n * sizeof(float));
+    // CSC(cudaMemcpy(result_host, result, n * sizeof(float), cudaMemcpyDeviceToHost));
+    // printf("result after scan3\n");
+    // print_array(result_host, n);
+
+
+    if (n >= 2 * BLOCK_SIZE) {
+        // printf("%d >= 2 * %d\n", n, BLOCK_SIZE);
+        recursive_gpu_scan(sums, numBlocks, sums2);
+    } else {
+        CSC(cudaMemcpy(sums2, sums, numBlocks * sizeof(float), cudaMemcpyDeviceToDevice));
+    }
+
+    threads = dim3(2 * BLOCK_SIZE, 1, 1);
+    blocks = dim3(numBlocks - 1, 1, 1);
+
+    scanDistribute <<<blocks, threads>>> (result + (2 * BLOCK_SIZE), sums2 + 1);
+
+    // CSC(cudaMemcpy(result_host, result, n * sizeof(float), cudaMemcpyDeviceToHost));
+    // printf("result after scanDistribute\n");
+    // print_array(result_host, n);
+
+    cudaFree(sums);
+    cudaFree(sums2);
+}
 
 
 // =============================================================================
@@ -439,6 +661,16 @@ void histogram_fill_splits(float *data, int n, float *splits, int *begin_postion
     }
 }
 
+
+// gpu histogram
+__global__ void gpu_histogram(float *data, int n, int *result, float min, float max, int splits_count) {
+    int index = blockDim.x * blockIdx.x + threadIdx.x;
+    int offset = gridDim.x * blockDim.x;
+    for ( ; index < n; index += offset) {
+        int insertion_index = index_from_float_value(data[index], min, max, splits_count);
+        atomicAdd(&(result[insertion_index]), 1);
+    }
+}
 
 
 
@@ -599,6 +831,19 @@ void bucket_sort(float *data, int n) {
 }
 
 
+//
+// gpu_bucket_sort description:
+//      data -- initial array allocated for CPU usage;
+//         n -- amount of items in data array;
+//    result -- sorted data array allocated for CPU usage.
+//
+__host__ void gpu_bucket_sort(float *data, int n, float *result) {
+
+    // prepare device data
+    float *data_device = NULL;
+    CSC(cudaMalloc((void **)&data_device, n * sizeof(float)));
+
+}
 
 
 // =============================================================================
@@ -627,76 +872,24 @@ test
     float *data = read_data_as_plain_text(&n);
     // float *data = read_data(&n);
 
-
-
-
-    // test gpu reduce
-
+    // gpu data
     float *data_device = NULL;
     CSC(cudaMalloc((void **)&data_device, n * sizeof(float)));
     CSC(cudaMemcpy(data_device, data, n * sizeof(float), cudaMemcpyHostToDevice));
 
-    float result_host = 0;
 
-    // cudaEvent_t start, stop;
-    // cudaEventCreate(&start);
-    // cudaEventCreate(&stop);
-    //
-    // cudaEventRecord(start, 0);
+    // test gpu scan
+    float *result_device = NULL;
+    CSC(cudaMalloc((void **)&result_device, n * sizeof(float)));
 
-    recursive_gpu_reduce_max(data_device, n, &result_host);
+    recursive_gpu_scan(data_device, n, result_device);
 
-    // cudaEventRecord(stop, 0);
-    //
-    // cudaEventSynchronize(stop);
-    //
-    // float elapsed_time;
-    // cudaEventElapsedTime(&elapsed_time, start, stop);
-    //
-    // cudaEventDestroy(start);
-    // cudaEventDestroy(stop);
-    //
-    // printf("reduce result: %f\n", result_host);
+    float *result_host = (float *)malloc(n * sizeof(float));
+    CSC(cudaMemcpy(result_host, result_device, n * sizeof(float), cudaMemcpyDeviceToHost));
 
-    printf("time spent: %f\n", elapsed_time);
+    print_array(result_host, n);
 
 
-
-
-
-    // cpu test
-    // float result = -1;
-    //
-    // clock_t begin, end;
-    // double time_spent;
-    //
-    // begin = clock();
-    // reduce(data, n, &result, &max_float, 0);
-    // end = clock();
-    //
-    // time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
-    //
-    // printf("reduce result: %f\n", result);
-    // printf("time spent: %lf\n", time_spent);
-
-
-
-
-
-
-
-    // // sorting
-    // bucket_sort(data, n);
-    //
-    // // write_data_with_size(data, n);
-    //
-    // // printf("\n-------------------------------\n");
-    // if (sorted(data, n)) {
-    //     printf("Status: OK\n");
-    //     // printf("Max recursion depth: %d\n", max_depth);
-    // } else {
-    //     printf("Status: WA\n");
-    // }
 
     return 0;
 }
