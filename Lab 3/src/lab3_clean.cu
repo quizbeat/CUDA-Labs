@@ -90,28 +90,12 @@ void print_array(float *data, int size) {
     printf("\n");
 }
 
-void print_subarray(float *data, int begin, int end) {
-    for (int i = begin; i < end; i++) {
-        printf("%f ", data[i]);
-    }
-    printf("\n");
-}
-
 void print_array(int *data, int size) {
     for (int i = 0; i < size; i++) {
         printf("%d ", data[i]);
     }
     printf("\n");
 }
-
-void print_int_address(int *p) {
-    printf(">>>> INT   Address = %p,  Value = %d\n", p, *p);
-}
-
-void print_float_address(float *p) {
-    printf(">>>> FLOAT Address = %p,  Value = %f\n", p, *p);
-}
-
 
 
 
@@ -153,98 +137,10 @@ void write_data_with_size(float *data, int n) {
 
 
 
-// =============================================================================
-//                                    HELPERS
-// =============================================================================
-
-float max_float(float lhs, float rhs) {
-    return (lhs > rhs) ? lhs : rhs;
-}
-
-float min_float(float lhs, float rhs) {
-    return (lhs < rhs) ? lhs : rhs;
-}
-
-float sum_float(float lhs, float rhs) {
-    return lhs + rhs;
-}
-
-float multiply_float(float lhs, float rhs) {
-    return lhs * rhs;
-}
-
-int sum_int(int lhs, int rhs) {
-    return lhs + rhs;
-}
-
-// map float value to split index
-int index_from_float_value(float value, float min, float max, int splits_count) {
-    int index = (int)((value - min) / (max - min) * (splits_count - 1));
-    return index;
-}
-
-void swap(float *lhs, float *rhs) {
-    float temp = *lhs;
-    *lhs = *rhs;
-    *rhs = temp;
-}
-
-
 
 // =============================================================================
 //                                   REDUCE
 // =============================================================================
-
-// plain cpu reduce
-void reduce(float *data, int n, float *result, float (*op)(float, float), float identity) {
-    *result = identity;
-    for (int i = 0; i < n; i++) {
-        *result = op(data[i], *result);
-    }
-}
-
-void reduce_min_max(float *data, int size, float *min, float *max) {
-    *min =  FLT_MAX;
-    *max = -FLT_MAX;
-    for (int i = 0; i < size; i++) {
-        if (data[i] > *max) { *max = data[i]; }
-        if (data[i] < *min) { *min = data[i]; }
-    }
-}
-
-
-
-// gpu reduce
-__global__ void gpuReduceSumFloat(float *data, int n, float *result) {
-
-    __shared__ float shared_data[2048];
-
-    int global_thread_id = 2 * blockDim.x * blockIdx.x + threadIdx.x;
-    int thread_id = threadIdx.x;
-
-    if (global_thread_id + blockDim.x < n) {
-        shared_data[thread_id] = data[global_thread_id] + data[global_thread_id + blockDim.x];
-    } else if (global_thread_id < n) {
-        shared_data[thread_id] = data[global_thread_id];
-    } else {
-        shared_data[thread_id] = 0;
-    }
-
-    __syncthreads();;
-
-    // reduction process
-    for (int i = blockDim.x / 2; i > 0; i /= 2) {
-        if (thread_id < i) {
-            shared_data[thread_id] += shared_data[thread_id + i];
-        }
-        __syncthreads();
-    }
-
-    // write result to global memory
-    if (thread_id == 0) {
-        result[blockIdx.x] = shared_data[0];
-    }
-}
 
 __global__ void gpuReduceMaxFloat(float *data, int n, float *result) {
 
@@ -306,33 +202,6 @@ __global__ void gpuReduceMinFloat(float *data, int n, float *result) {
     if (thread_id == 0) {
         result[blockIdx.x] = shared_data[0];
     }
-}
-
-__host__ void recursive_gpu_reduce_sum(float *data_device, int n, float *result_host) {
-    int gridSize = (n / 2048) + 1;
-    int blockSize = 1024;
-
-    // printf("gridSize = %d\n", gridSize);
-
-    float *result_device = NULL;
-    CSC(cudaMalloc((void **)&result_device, gridSize * sizeof(float)));
-    CSC(cudaGetLastError());
-
-    if (result_device == NULL) {
-        printf("YOLO! NULL MEMORY DETECTED!\n");
-    }
-
-    gpuReduceSumFloat <<<gridSize, blockSize>>> (data_device, n, result_device);
-    CSC(cudaGetLastError());
-
-    if (gridSize > 1) {
-        recursive_gpu_reduce_sum(result_device, gridSize, result_host);
-    } else {
-        CSC(cudaMemcpy(result_host, result_device, sizeof(float), cudaMemcpyDeviceToHost));
-        CSC(cudaGetLastError());
-    }
-    CSC(cudaFree(result_device));
-    CSC(cudaGetLastError());
 }
 
 __host__ void recursive_gpu_reduce_max(float *data_device, int n, float *result_host) {
@@ -403,136 +272,6 @@ __host__ void recursive_gpu_reduce_min(float *data_device, int n, float *result_
 // =============================================================================
 //                                    SCAN
 // =============================================================================
-
-// plain cpu scan
-// floating point numbers scan
-void scan(float *data, int n, float *result_data, float (*op)(float, float), float identity, bool inclusive) {
-    float result = identity;
-    for (int i = 0; i < n; i++) {
-        if (inclusive) {
-            result = op(result, data[i]);
-            result_data[i] = result;
-        } else { // exclusive
-            result_data[i] = result;
-            result = op(result, data[i]);
-        }
-    }
-}
-
-// integer numbers scan
-void scan(int *data, int n, int *result_data, int (*op)(int, int), int identity, bool inclusive) {
-    int result = identity;
-    for (int i = 0; i < n; i++) {
-        if (inclusive) {
-            result = op(result, data[i]);
-            result_data[i] = result;
-        } else { // exclusive
-            result_data[i] = result;
-            result = op(result, data[i]);
-        }
-    }
-}
-
-void scan_calculate_positions(int *position_for_split, int n, int *size_of_split) {
-    for (int i = 1; i < n; i++) {
-        position_for_split[i] = position_for_split[i - 1] + size_of_split[i - 1];
-    }
-}
-
-
-// gpu scan
-// Blelloch Scan
-__global__ void BlellochScanSumFloat(float *data, int n, float *result) {
-    __shared__ float shared_data[2 * BLOCK_SIZE];
-
-    int thread_id = threadIdx.x;
-    int offset = 1;
-
-    shared_data[thread_id + BLOCK_SIZE] = data[thread_id + BLOCK_SIZE];
-
-    for (int i = n / 2; i > 0; i /= 2) {
-        __syncthreads();
-        if (thread_id < i) {
-            int ai = offset * (2 * thread_id + 1) - 1;
-            int bi = offset * (2 * thread_id + 2) - 1;
-            shared_data[bi] += shared_data[ai];
-        }
-        offset *= 2;
-    }
-
-    // clear last item
-    if (thread_id == 0) {
-        shared_data[n - 1] = 0; // ????
-    }
-
-    // copying and addition
-    for (int i = 1; i < n; i *= 2) {
-        offset /= 2;
-        __syncthreads();
-        if (thread_id < i) {
-            int ai = offset * (2 * thread_id + 1) - 1;
-            int bi = offset * (2 * thread_id + 2) - 1;
-            float t = shared_data[ai];
-            shared_data[ai] = shared_data[bi];
-            shared_data[bi] += t;
-        }
-    }
-
-    __syncthreads();
-
-    // write result
-    result[2 * thread_id] = shared_data[2 * thread_id];
-    result[2 * thread_id + 1] = shared_data[2 * thread_id + 1];
-}
-
-__global__ void scan2(float *data, int n, float *result) {
-    __shared__ float temp[2 * BLOCK_SIZE + CONFLICT_FREE_OFFSET(2 * BLOCK_SIZE)];
-
-    int thread_id = threadIdx.x;
-    int offset = 1;
-    int ai = thread_id;
-    int bi = thread_id + (n / 2);
-    int offset_A = CONFLICT_FREE_OFFSET(ai);
-    int offset_B = CONFLICT_FREE_OFFSET(bi);
-
-    temp[ai + offset_A] = data[ai];
-    temp[bi + offset_B] = data[bi];
-
-    for (int d = n >> 1; d > 0; d >>= 1) {
-        __syncthreads();
-        if (thread_id < d) {
-            int ai = offset * (2 * thread_id + 1) - 1;
-            int bi = offset * (2 * thread_id + 2) - 1;
-            ai += CONFLICT_FREE_OFFSET(ai);
-            bi += CONFLICT_FREE_OFFSET(bi);
-            temp[bi] += temp[ai];
-        }
-        offset <<= 1;
-    }
-
-    if (thread_id == 0) {
-        temp[n - 1 + CONFLICT_FREE_OFFSET(n - 1)] = 0;
-    }
-
-    for (int d = 1; d < n; d <<= 1) {
-        offset >>= 1;
-        __syncthreads();
-        if (thread_id < d) {
-            int ai = offset * (2 * thread_id + 1) - 1;
-            int bi = offset * (2 * thread_id + 2) - 1;
-            ai += CONFLICT_FREE_OFFSET(ai);
-            bi += CONFLICT_FREE_OFFSET(bi);
-            float t = temp[ai];
-            temp[ai] = temp[bi];
-            temp[bi] += t;
-        }
-    }
-
-    __syncthreads();
-
-    result[ai] = temp[ai + offset_A];
-    result[bi] = temp[bi + offset_B];
-}
 
 __global__ void scan3(int *data, int n, int *sums, int *result) {
     __shared__ int temp[2 * BLOCK_SIZE + CONFLICT_FREE_OFFSET(2 * BLOCK_SIZE)];
@@ -605,9 +344,6 @@ __host__ void recursive_gpu_scan(int *data, int n, int *result) {
 #endif
 
     int numBlocks = n / (2 * BLOCK_SIZE) + 1;
-    // if (numBlocks < 1) {
-    //     numBlocks = 1;
-    // }
 
 #ifdef DEBUG
     print_depth_space();
@@ -623,22 +359,11 @@ __host__ void recursive_gpu_scan(int *data, int n, int *result) {
     CSC(cudaMalloc((void **)&sums2, numBlocks * sizeof(int)));
     CSC(cudaGetLastError());
 
-
-    // CSC(cudaMemset(sums, 0.f, numBlocks * sizeof(float)));
-    // CSC(cudaMemset(sums2, 0.f, numBlocks * sizeof(float)));
-
     dim3 threads(BLOCK_SIZE, 1, 1);
     dim3 blocks(numBlocks, 1, 1);
 
     scan3 <<<blocks, threads>>> (data, 2 * BLOCK_SIZE, sums, result);
     CSC(cudaGetLastError());
-
-
-    // float *result_host = (float *)malloc(n * sizeof(float));
-    // CSC(cudaMemcpy(result_host, result, n * sizeof(float), cudaMemcpyDeviceToHost));
-    // printf("result after scan3\n");
-    // print_array(result_host, n);
-
 
     if (n >= 2 * BLOCK_SIZE) {
         // printf("%d >= 2 * %d\n", n, BLOCK_SIZE);
@@ -662,10 +387,6 @@ __host__ void recursive_gpu_scan(int *data, int n, int *result) {
         CSC(cudaGetLastError());
     }
 
-    // CSC(cudaMemcpy(result_host, result, n * sizeof(float), cudaMemcpyDeviceToHost));
-    // printf("result after scanDistribute\n");
-    // print_array(result_host, n);
-
     cudaFree(sums);
     CSC(cudaGetLastError());
 
@@ -677,31 +398,6 @@ __host__ void recursive_gpu_scan(int *data, int n, int *result) {
 // =============================================================================
 //                                  HISTOGRAM
 // =============================================================================
-
-void histogram(float *data, int n, int *result, int op(float value, float min, float max, int count), float min, float max, int count) {
-    for (int i = 0; i < n; i++) {
-        int index = op(data[i], min, max, count);
-        result[index]++;
-    }
-}
-
-void histogram_splits_sizes(float *data, int n, int *size_of_split, float min, float max, int splits_count) {
-    for (int i = 0; i < n; i++) {
-        int index = index_from_float_value(data[i], min, max, splits_count);
-        size_of_split[index]++;
-    }
-}
-
-void histogram_fill_splits(float *data, int n, float *splits, int *begin_position_for_split, int *current_size_of_split, float min, float max, int splits_count) {
-    for (int i = 0; i < n; i++) {
-        float value = data[i];
-        int split_index = index_from_float_value(value, min, max, splits_count);
-        int insert_position = begin_position_for_split[split_index] + current_size_of_split[split_index];
-        splits[insert_position] = value;
-        current_size_of_split[split_index]++;
-    }
-}
-
 
 // gpu histogram
 __global__ void gpuHistogramCalculateSplitsSizes(float *data, int n, int *result, float min, float max, int splits_count) {
@@ -739,6 +435,13 @@ __global__ void gpuHistogramFillSplits(float *data_device, int n, float *splits_
 //                                   SORT
 // =============================================================================
 
+void swap(float *lhs, float *rhs) {
+    float temp = *lhs;
+    *lhs = *rhs;
+    *rhs = temp;
+}
+
+
 void odd_even_sort(float *data, int size) {
     for (int i = 0; i < size; i++) {
         for (int j = i & 1; j < size - 1; j += 2) {
@@ -749,156 +452,11 @@ void odd_even_sort(float *data, int size) {
     }
 }
 
-void odd_even_sort_range(float *data, int begin, int end) {
-    int size = end - begin;
-    for (int i = 0; i < size; i++) {
-        for (int j = i & 1; j < size - 1; j += 2) {
-            if (data[j + begin] > data[j + begin + 1]) {
-                swap(&data[j + begin], &data[j + begin + 1]);
-            }
-        }
-    }
-}
-
-void bucket_sort(float *data, int n) {
-
-    depth_inc();
-
-    float min = FLT_MAX;
-    float max = -FLT_MAX;
-
-    reduce(data, n, &min, &min_float,  FLT_MAX);
-    reduce(data, n, &max, &max_float, -FLT_MAX);
-
-    if (fabs(min - max) < EPS) { // data already sorted
-        depth_dec();
-        return;
-    }
-
-
-    // STEP 2: Make splits
-
-    // calculate splits count
-    int splits_count = n / SPLIT_SIZE + 1;
-
-
-    // create array for splits sizes
-    int *size_of_split = (int *)malloc(splits_count * sizeof(int));
-    for (int i = 0; i < splits_count; i++) {
-        size_of_split[i] = 0;
-    }
-
-
-    // perform histogram to calculate splits sizes
-    histogram(data, n, size_of_split, &index_from_float_value, min, max, splits_count);
-
-
-    // calculate splits begin position
-    int *begin_position_for_split = (int *)malloc(splits_count * sizeof(int));
-    scan(size_of_split, splits_count, begin_position_for_split, &sum_int, 0, false);
-
-
-    int *current_size_of_split = (int *)malloc(splits_count * sizeof(int));
-    for (int i = 0; i < splits_count; i++) {
-        current_size_of_split[i] = 0;
-    }
-
-
-    // Example:
-    //                          (empty split)
-    // size_of_split[i]:    3         v  2       5
-    // splits looks like: [ a1 a2 a3 | | a4 a5 | a6 a7 a8 a9 a10 ]
-    //                      ^            ^       ^
-    //                 current_position_for_split[i] (initial state)
-
-
-    // create splits array
-    float *splits = (float *)malloc(n * sizeof(float)); // !!!!
-
-    // fill splits with histogram
-    histogram_fill_splits(data, n, splits, begin_position_for_split, current_size_of_split, min, max, splits_count);
-
-
-
-    // STEP 3: Make buckets
-
-    int buckets_count = splits_count;
-    int *size_of_bucket = (int *)malloc(buckets_count * sizeof(int)); // how many buckets??
-
-    for (int i = 0; i < buckets_count; i++) {
-        size_of_bucket[i] = 0;
-    }
-
-    int *begin_position_for_bucket = (int *)malloc(buckets_count * sizeof(int));
-
-
-    int bucket_index = 0;
-
-    for (int split_index = 0; split_index < splits_count; split_index++) {
-
-        int split_size = size_of_split[split_index];
-
-        if (split_size > BUCKET_SIZE) {
-
-            bucket_index++;
-
-            // sort current split
-            float *split = &splits[begin_position_for_split[split_index]];
-            bucket_sort(split, split_size);
-
-            // remember split as bucket
-            begin_position_for_bucket[bucket_index] = begin_position_for_split[split_index];
-            size_of_bucket[bucket_index] = size_of_split[split_index];
-            bucket_index++;
-
-        } else {
-            int current_bucket_remaining_capacity = BUCKET_SIZE - size_of_bucket[bucket_index];
-            if (split_size <= current_bucket_remaining_capacity) {
-                // insert split to current bucket
-                if (current_bucket_remaining_capacity == BUCKET_SIZE) {
-                    begin_position_for_bucket[bucket_index] = begin_position_for_split[split_index];
-                }
-                size_of_bucket[bucket_index] += size_of_split[split_index];
-
-            } else {
-                // insert split to next bucket
-                bucket_index++;
-                begin_position_for_bucket[bucket_index] = begin_position_for_split[split_index];
-                size_of_bucket[bucket_index] = size_of_split[split_index];
-            }
-        }
-    }
-
-    // determine correct buckets count
-    if (size_of_bucket[bucket_index] == 0) {
-        buckets_count = bucket_index;
-    } else {
-        buckets_count = bucket_index + 1;
-    }
-
-
-
-    // STEP 4: Sort buckets
-
-    for (int i = 0; i < buckets_count; i++) {
-        float *bucket = &splits[begin_position_for_bucket[i]];
-        int bucket_size = size_of_bucket[i];
-        odd_even_sort(bucket, bucket_size);
-    }
-
-    memcpy(data, splits, n * sizeof(float));
-
-    depth_dec();
-}
-
-
-
 
 //
 // gpu_bucket_sort description:
-//      data -- initial array allocated for GPU usage;
-//         n -- amount of items in data array;
-//    result -- sorted data array allocated for CPU usage.
+//  data_device -- initial array allocated for GPU usage;
+//            n -- amount of items in data array;
 //
 __host__ void gpu_bucket_sort(float *data_device, int n) {
 
@@ -997,11 +555,6 @@ __host__ void gpu_bucket_sort(float *data_device, int n) {
 #endif
 
 
-
-    // int *current_size_of_split = (int *)malloc(splits_count * sizeof(int));
-    // for (int i = 0; i < splits_count; i++) {
-    //     current_size_of_split[i] = 0;
-    // }
 
     unsigned int *current_size_of_split_device = NULL;
     CSC(cudaMalloc((void **)&current_size_of_split_device, splits_count * sizeof(unsigned int)));
@@ -1126,9 +679,20 @@ __host__ void gpu_bucket_sort(float *data_device, int n) {
 
         CSC(cudaMemcpy(&(splits_device[bucket_begin_position]), bucket, bucket_size * sizeof(float), cudaMemcpyHostToDevice));
         CSC(cudaGetLastError());
+
+        free(bucket);
     }
 
     CSC(cudaMemcpy(data_device, splits_device, n * sizeof(float), cudaMemcpyDeviceToDevice));
+
+    CSC(cudaFree(size_of_split_device));
+    CSC(cudaFree(splits_device));
+    CSC(cudaFree(begin_position_for_split_device));
+    CSC(cudaFree(current_size_of_split_device));
+    CSC(cudaGetLastError());
+
+    free(size_of_bucket);
+    free(begin_position_for_bucket);
 
 #ifdef DEBUG
     print_depth_space();
@@ -1139,7 +703,12 @@ __host__ void gpu_bucket_sort(float *data_device, int n) {
 }
 
 
-__host__ void __bucket_sort(float *data, int n) {
+//
+// bucket_sort description:
+//  data -- initial array allocated for CPU usage;
+//     n -- amount of items in data array;
+//
+__host__ void bucket_sort(float *data, int n) {
     // prepare device data
     float *data_device = NULL;
     CSC(cudaMalloc((void **)&data_device, n * sizeof(float)));
@@ -1169,17 +738,16 @@ bool sorted(float *data, int n) {
 
 int main() {
 
-/*
-test
-10
-3 -5 6 7 4 1 8 10 2 5
-*/
-
     int n = 0;
     float *data = read_data_as_plain_text(&n);
     // float *data = read_data(&n);
 
-    __bucket_sort(data, n);
+    if (n == 0) {
+        free(data);
+        return 0;
+    }
+
+    bucket_sort(data, n);
 
     print_array(data, n);
 
@@ -1188,6 +756,8 @@ test
     } else {
         printf("--\nStatus: WA\n");
     }
+
+    free(data);
 
     return 0;
 }
