@@ -358,6 +358,7 @@ __host__ void recursive_gpu_scan(int *data, int n, int *result) {
 
     //       n/1024+1   512                     1024
     gpuScan <<<blocks, threads>>> (data, 2 * BLOCK_SIZE_SCAN, sums, result);
+    CSC(cudaThreadSynchronize());
     CSC(cudaGetLastError());
 
             //     1024
@@ -569,7 +570,7 @@ __host__ void gpu_bucket_sort(float *data_device, int n) {
     CSC(cudaMalloc((void **)&begin_position_for_split_device, splits_count * sizeof(int)));
     CSC(cudaGetLastError());
 
-    recursive_gpu_scan(size_of_split_device, n, begin_position_for_split_device);
+    recursive_gpu_scan(size_of_split_device, splits_count, begin_position_for_split_device);
     CSC(cudaGetLastError());
 
 #ifdef DEBUG // check begin_position_for_split

@@ -5,7 +5,6 @@ for t in 1..test_amount
     data_size = rand(2000000)
 
     puts "Running test #{t} with #{data_size} elements..."
-    print "  Status: "
 
     data = []
 
@@ -32,14 +31,14 @@ for t in 1..test_amount
     sorted_data = run_output.split(' ').map(&:to_f)
 
     if sorted_data.size != data_size
-        puts "Error, data size and sorted data size not equal"
-        puts "  Test file saved as: #{file_name}"
+        puts " Status: Error, data size and sorted data size not equal"
+        puts " Test file saved as: #{file_name}"
         exit
     end
 
     ok = true
 
-    for i in 1..sorted_data
+    for i in 1...sorted_data.size
         if sorted_data[i] < sorted_data[i - 1]
             ok = false
             break
@@ -47,10 +46,10 @@ for t in 1..test_amount
     end
 
     if (ok)
-        puts 'OK'
+        puts ' Status: OK'
     else
-        puts 'WA'
-        puts "  Test file saved as: #{file_name}"
+        puts ' Status: WA'
+        puts " Test file saved as: #{file_name}"
         exit
     end
 
