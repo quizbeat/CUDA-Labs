@@ -50,11 +50,8 @@
 #define BUCKET_SIZE 1024
 #define SPLIT_SIZE  32
 
-
 #define INDEX_FROM_FLOAT_VALUE(value,min,max,count) (int)((value-min)/(max-min)*(count-1))
 #define SWAP_FLOATS(a,b) {float t = a; a = b; b = t;}
-
-
 
 
 
@@ -87,6 +84,7 @@ void print_depth_space() {
 
 
 
+
 // =============================================================================
 //                                   PRINT
 // =============================================================================
@@ -104,6 +102,7 @@ void print_array(int *data, int size) {
     }
     printf("\n");
 }
+
 
 
 
@@ -141,7 +140,6 @@ void write_data_with_size(float *data, int n) {
     fwrite(&n, sizeof(int), 1, stdout);
     fwrite(data, sizeof(float), n, stdout);
 }
-
 
 
 
@@ -275,8 +273,6 @@ __host__ void recursive_gpu_reduce_min(float *data_device, int n, float *result_
 
 
 
-
-
 // =============================================================================
 //                                    SCAN
 // =============================================================================
@@ -362,13 +358,13 @@ __global__ void gpuScan(int *data, int n, int *sums, int *result) {
 		int index = 2 * BLOCK_SIZE_SCAN - 1 + CONFLICT_FREE_OFFSET(2 * BLOCK_SIZE_SCAN - 1);
 
 #ifdef DEBUG
-        printf(">>> BLOCK_[%d], THREAD_[%d] : (5) sums[%d] = shared_data[%d]\n", blockIdx.x, threadIdx.x, blockIdx.x, i);
+        printf(">>> BLOCK_[%d], THREAD_[%d] : (5) sums[%d] = shared_data[%d]\n", blockIdx.x, threadIdx.x, blockIdx.x, index);
 #endif
 
 		sums[blockIdx.x] = shared_data[index];
 
 #ifdef DEBUG
-        printf(">>> BLOCK_[%d], THREAD_[%d] : (5) shared_data[%d] = 0\n", blockIdx.x, threadIdx.x, i);
+        printf(">>> BLOCK_[%d], THREAD_[%d] : (5) shared_data[%d] = 0\n", blockIdx.x, threadIdx.x, index);
 #endif
 
 		shared_data[index] = 0;
@@ -496,6 +492,8 @@ void recursive_gpu_scan(int *data, int n, int *result) {
 }
 
 
+
+
 // =============================================================================
 //                                  HISTOGRAM
 // =============================================================================
@@ -532,51 +530,12 @@ __global__ void gpuHistogramFillSplits(float *data_device, int n, float *splits_
 
 
 
+
 // =============================================================================
 //                                   SORT
 // =============================================================================
 
-void swap(float *lhs, float *rhs) {
-    float temp = *lhs;
-    *lhs = *rhs;
-    *rhs = temp;
-}
-
-
-void odd_even_sort(float *data, int size) {
-    for (int i = 0; i < size; i++) {
-        for (int j = i & 1; j < size - 1; j += 2) {
-            if (data[j] > data[j + 1]) {
-                swap(&data[j], &data[j + 1]);
-            }
-        }
-    }
-}
-
-// multiple threads
-__global__ void oddEvenSort(float *data, int n, int buckets_count, int *begin_position_for_bucket, int *size_of_bucket) {
-    int bucket_index = blockDim.x * blockIdx.x + threadIdx.x;
-    int offset = gridDim.x * blockDim.x;
-
-    for (int b = bucket_index; b < buckets_count; b += offset) {
-        int size = size_of_bucket[bucket_index];
-        if (size == -1) { // already sorted
-            continue;
-        }
-        int begin = begin_position_for_bucket[b];
-        for (int i = begin; i < begin + size; i++) {
-            for (int j = i & 1; j < begin + size - 1; j += 2) {
-                if (data[j] > data[j + 1]) {
-                    float temp = data[j];
-                    data[j] = data[j + 1];
-                    data[j + 1] = temp;
-                }
-            }
-        }
-    }
-}
-
-// 1 block - 1 bucket
+// 1 block sorts 1 bucket
 __global__ void gpuOddEvenSort(float *buckets, int n, int *begin_position_for_bucket, int *size_of_bucket) {
 
     int bucket_index = blockIdx.x;
@@ -586,17 +545,23 @@ __global__ void gpuOddEvenSort(float *buckets, int n, int *begin_position_for_bu
         return;
     }
 
-    // printf(">>> BLOCK_[%d], THREAD_[%d] : bucket_index = %d\n", blockIdx.x, threadIdx.x, bucket_index);
+#ifdef DEBUG
+    printf(">>> BLOCK_[%d], THREAD_[%d] : bucket_index = %d\n", blockIdx.x, threadIdx.x, bucket_index);
+#endif
 
     // prepare shared array for bucket
     __shared__ float shared_bucket[BUCKET_SIZE];
 
     int thread_id = threadIdx.x;
 
-    // printf(">>> BLOCK_[%d], THREAD_[%d] : shared index [%d]\n", blockIdx.x, threadIdx.x, 2 * thread_id);
+#ifdef DEBUG
+    printf(">>> BLOCK_[%d], THREAD_[%d] : shared index [%d]\n", blockIdx.x, threadIdx.x, 2 * thread_id);
+#endif
     shared_bucket[2 * thread_id    ] = FLT_MAX; // dummy for item index out of bounds
 
-    // printf(">>> BLOCK_[%d], THREAD_[%d] : shared index [%d]\n", blockIdx.x, threadIdx.x, 2 * thread_id + 1);
+#ifdef DEBUG
+    printf(">>> BLOCK_[%d], THREAD_[%d] : shared index [%d]\n", blockIdx.x, threadIdx.x, 2 * thread_id + 1);
+#endif
     shared_bucket[2 * thread_id + 1] = FLT_MAX; // dummy for item index out of bounds
 
 
@@ -607,13 +572,17 @@ __global__ void gpuOddEvenSort(float *buckets, int n, int *begin_position_for_bu
 
     item_index = 2 * thread_id + begin_position_for_bucket[bucket_index];
     if (item_index - begin_position_for_bucket[bucket_index] < bucket_size) {
-        // printf(">>> BLOCK_[%d], THREAD_[%d] : assign to shared index [%d] from buckets index [%d]\n", blockIdx.x, threadIdx.x, 2 * thread_id, item_index);
+#ifdef DEBUG
+        printf(">>> BLOCK_[%d], THREAD_[%d] : assign to shared index [%d] from buckets index [%d]\n", blockIdx.x, threadIdx.x, 2 * thread_id, item_index);
+#endif
         shared_bucket[2 * thread_id] = buckets[item_index];
     }
 
     item_index = 2 * thread_id + 1 + begin_position_for_bucket[bucket_index];
     if (item_index - begin_position_for_bucket[bucket_index] < bucket_size) {
-        // printf(">>> BLOCK_[%d], THREAD_[%d] : assign to shared index [%d] from buckets index [%d]\n", blockIdx.x, threadIdx.x, 2 * thread_id + 1, item_index);
+#ifdef DEBUG
+        printf(">>> BLOCK_[%d], THREAD_[%d] : assign to shared index [%d] from buckets index [%d]\n", blockIdx.x, threadIdx.x, 2 * thread_id + 1, item_index);
+#endif
         shared_bucket[2 * thread_id + 1] = buckets[item_index];
     }
 
@@ -624,17 +593,21 @@ __global__ void gpuOddEvenSort(float *buckets, int n, int *begin_position_for_bu
 
     for (int i = 0; i < blockDim.x; i++) {
         item_index = 2 * thread_id + 1;
-        if (item_index < odd_index_limit) { // is it correct ??
-            // printf(">>> BLOCK_[%d], THREAD_[%d] : comparing shared indexes [%d] and [%d]\n", blockIdx.x, threadIdx.x, item_index, item_index + 1);
+        if (item_index < odd_index_limit) {
+#ifdef DEBUG
+            printf(">>> BLOCK_[%d], THREAD_[%d] : comparing shared indexes [%d] and [%d]\n", blockIdx.x, threadIdx.x, item_index, item_index + 1);
+#endif
             if (shared_bucket[item_index] > shared_bucket[item_index + 1]) {
                 SWAP_FLOATS(shared_bucket[item_index], shared_bucket[item_index + 1]);
             }
         }
         __syncthreads();
         item_index = 2 * thread_id;
-        if (thread_id < even_index_limit) { // is it correct ??
+        if (thread_id < even_index_limit) {
             if (shared_bucket[item_index] > shared_bucket[item_index + 1]) {
-                // printf(">>> BLOCK_[%d], THREAD_[%d] : comparing shared indexes [%d] and [%d]\n", blockIdx.x, threadIdx.x, item_index, item_index + 1);
+#ifdef DEBUG
+                printf(">>> BLOCK_[%d], THREAD_[%d] : comparing shared indexes [%d] and [%d]\n", blockIdx.x, threadIdx.x, item_index, item_index + 1);
+#endif
                 SWAP_FLOATS(shared_bucket[item_index], shared_bucket[item_index + 1]);
             }
         }
@@ -645,18 +618,20 @@ __global__ void gpuOddEvenSort(float *buckets, int n, int *begin_position_for_bu
 
     item_index = 2 * thread_id + begin_position_for_bucket[bucket_index];
     if (item_index - begin_position_for_bucket[bucket_index] < bucket_size) {
-        // printf(">>> BLOCK_[%d], THREAD_[%d] : assign to buckets index [%d] from shared index [%d]\n", blockIdx.x, threadIdx.x, 2 * thread_id + 1, item_index, 2 * thread_id);
+#ifdef DEBUG
+        printf(">>> BLOCK_[%d], THREAD_[%d] : assign to buckets index [%d] from shared index [%d]\n", blockIdx.x, threadIdx.x, 2 * thread_id + 1, item_index, 2 * thread_id);
+#endif
         buckets[item_index] = shared_bucket[2 * thread_id];
 
     }
 
     item_index = 2 * thread_id + 1 + begin_position_for_bucket[bucket_index];
     if (item_index - begin_position_for_bucket[bucket_index] < bucket_size) {
-        // printf(">>> BLOCK_[%d], THREAD_[%d] : assign to buckets index [%d] from shared index [%d]\n", blockIdx.x, threadIdx.x, 2 * thread_id + 1, item_index, 2 * thread_id + 1);
+#ifdef DEBUG
+        printf(">>> BLOCK_[%d], THREAD_[%d] : assign to buckets index [%d] from shared index [%d]\n", blockIdx.x, threadIdx.x, 2 * thread_id + 1, item_index, 2 * thread_id + 1);
+#endif
         buckets[item_index] = shared_bucket[2 * thread_id + 1];
     }
-
-    // __syncthreads(); // need ???
 }
 
 
@@ -954,11 +929,11 @@ int main() {
 
     // print_array(data, n);
 
-    // if (sorted(data, n)) {
-    //     printf("--\nStatus: OK\n");
-    // } else {
-    //     printf("--\nStatus: WA\n");
-    // }
+    if (sorted(data, n)) {
+        printf("--\nStatus: OK\n");
+    } else {
+        printf("--\nStatus: WA\n");
+    }
 
     free(data);
 
