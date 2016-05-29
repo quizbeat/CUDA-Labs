@@ -33,8 +33,8 @@
 #define GRID_SIZE  32
 #define BLOCK_SIZE 32
 
-#define GRID_SIZE_REDUCE  512
-#define BLOCK_SIZE_REDUCE 512
+#define GRID_SIZE_REDUCE  1024
+#define BLOCK_SIZE_REDUCE 1024
 
 #define GRID_SIZE_SCAN  512
 #define BLOCK_SIZE_SCAN 512
@@ -150,7 +150,7 @@ void write_data_with_size(float *data, int n) {
 
 __global__ void gpuReduceMaxFloat(float *data, int n, float *result) {
 
-    __shared__ float shared_data[2048];
+    __shared__ float shared_data[2 * BLOCK_SIZE_REDUCE];
 
     int global_thread_id = 2 * blockDim.x * blockIdx.x + threadIdx.x;
     int thread_id = threadIdx.x;
@@ -181,7 +181,7 @@ __global__ void gpuReduceMaxFloat(float *data, int n, float *result) {
 
 __global__ void gpuReduceMinFloat(float *data, int n, float *result) {
 
-    __shared__ float shared_data[2048];
+    __shared__ float shared_data[2 * BLOCK_SIZE_REDUCE];
 
     int global_thread_id = 2 * blockDim.x * blockIdx.x + threadIdx.x;
     int thread_id = threadIdx.x;
@@ -211,8 +211,8 @@ __global__ void gpuReduceMinFloat(float *data, int n, float *result) {
 }
 
 __host__ void recursive_gpu_reduce_max(float *data_device, int n, float *result_host) {
-    int gridSize = (n / 2048) + 1;
-    int blockSize = 1024;
+    int gridSize = (n / (2 * BLOCK_SIZE_REDUCE)) + 1;
+    int blockSize = BLOCK_SIZE_REDUCE;
 
     // printf("gridSize = %d\n", gridSize);
 
@@ -238,8 +238,8 @@ __host__ void recursive_gpu_reduce_max(float *data_device, int n, float *result_
 }
 
 __host__ void recursive_gpu_reduce_min(float *data_device, int n, float *result_host) {
-    int gridSize = (n / 2048) + 1;
-    int blockSize = 1024;
+    int gridSize = (n / (2 * BLOCK_SIZE_REDUCE)) + 1;
+    int blockSize = BLOCK_SIZE_REDUCE;
 
     // printf("gridSize = %d\n", gridSize);
 
@@ -690,7 +690,7 @@ __host__ void gpu_bucket_sort(float *data_device, int n) {
     CSC(cudaGetLastError());
 
     // calculate splits sizes with histogram
-    gpuHistogramCalculateSplitsSizes <<<GRID_SIZE, BLOCK_SIZE>>> (data_device, n, size_of_split_device, min, max, splits_count);
+    gpuHistogramCalculateSplitsSizes <<<GRID_SIZE_HISTOGRAM, BLOCK_SIZE_HISTOGRAM>>> (data_device, n, size_of_split_device, min, max, splits_count);
     CSC(cudaGetLastError());
 
 
@@ -715,7 +715,7 @@ __host__ void gpu_bucket_sort(float *data_device, int n) {
     CSC(cudaMalloc((void **)&begin_position_for_split_device, splits_count * sizeof(int)));
     CSC(cudaGetLastError());
 
-    recursive_gpu_scan(size_of_split_device, splits_count, begin_position_for_split_device); //////
+    recursive_gpu_scan(size_of_split_device, splits_count, begin_position_for_split_device);
     CSC(cudaGetLastError());
 
 
@@ -733,8 +733,6 @@ __host__ void gpu_bucket_sort(float *data_device, int n) {
 
 #endif
 
-
-
     unsigned int *current_size_of_split_device = NULL;
     CSC(cudaMalloc((void **)&current_size_of_split_device, splits_count * sizeof(unsigned int)));
     CSC(cudaGetLastError());
@@ -748,10 +746,10 @@ __host__ void gpu_bucket_sort(float *data_device, int n) {
     CSC(cudaGetLastError());
 
     // fill splits with histogram
-    gpuHistogramFillSplits <<<GRID_SIZE, BLOCK_SIZE>>> (data_device, n, splits_device,
-                                                        begin_position_for_split_device,
-                                                        current_size_of_split_device,
-                                                        min, max, splits_count);
+    gpuHistogramFillSplits <<<GRID_SIZE_HISTOGRAM, BLOCK_SIZE_HISTOGRAM>>> (data_device, n, splits_device,
+                                                                            begin_position_for_split_device,
+                                                                            current_size_of_split_device,
+                                                                            min, max, splits_count);
     CSC(cudaGetLastError());
 
 
