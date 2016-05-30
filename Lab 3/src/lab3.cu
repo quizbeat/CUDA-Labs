@@ -975,7 +975,7 @@ __host__ void gpu_bucket_sort(float *data_device, int n) {
     CSC(cudaMalloc((void **)&begin_position_for_split_device, splits_count * sizeof(int)));
     CSC(cudaGetLastError());
 
-    recursive_gpu_scan(size_of_split_device, n, begin_position_for_split_device);
+    recursive_gpu_scan(size_of_split_device, splits_count, begin_position_for_split_device);
     CSC(cudaGetLastError());
 
 
@@ -1181,7 +1181,7 @@ test
 
     __bucket_sort(data, n);
 
-    print_array(data, n);
+    // print_array(data, n);
 
     if (sorted(data, n)) {
         printf("--\nStatus: OK\n");

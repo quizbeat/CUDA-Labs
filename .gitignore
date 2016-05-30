@@ -1,1 +1,7 @@
 *.out
+*.asc
+
+# huge test
+sort_100000000.txt
+
+
